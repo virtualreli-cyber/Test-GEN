@@ -1,0 +1,5 @@
+{
+  "name": "ExamGen AI",
+  "description": "An AI-powered tool to format, structure, and randomize multiple-choice exams for printing.",
+  "requestFramePermissions": []
+}
