@@ -1,7 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Question, ExamHeader } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+
 
 // Helper para limpiar respuestas que contienen bloques de código markdown
 const cleanResponse = (text: string | undefined): string => {

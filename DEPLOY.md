@@ -7,10 +7,11 @@
 1. Ve a tu sitio en Netlify
 2. Click en **Site settings** → **Environment variables**
 3. Añade la siguiente variable:
-   - **Key:** `GEMINI_API_KEY`
+   - **Key:** `VITE_GEMINI_API_KEY`
    - **Value:** Tu API key de Google Gemini
 
 ### Paso 2: Configurar el Build
+
 
 Netlify debería detectar automáticamente la configuración del archivo `netlify.toml`, pero si no:
 
