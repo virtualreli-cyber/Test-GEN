@@ -1,61 +1,24 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { Question, ExamHeader } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-
-
-// Helper para limpiar respuestas que contienen bloques de código markdown
-const cleanResponse = (text: string | undefined): string => {
-  if (!text) return "[]";
-  // Eliminar bloques ```json y ``` al inicio y final
-  let cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
-  return cleaned;
-};
+// Netlify Functions base URL - works in both dev and production
+const API_BASE = '/.netlify/functions';
 
 export const parseQuestionsFromText = async (text: string): Promise<Question[]> => {
   if (!text.trim()) return [];
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Extract multiple choice questions from the following text. 
-      The text contains questions and their answers. 
-      Do not change the wording of the questions or answers. 
-      Return a clean JSON structure. 
-      Input text:
-      ${text}`,
-      config: {
-        systemInstruction: "You are a helpful assistant that structures raw exam text into JSON. Identify the question text and the 4 options. Do not alter the content.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              text: {
-                type: Type.STRING,
-                description: "The question text"
-              },
-              options: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "The list of 4 possible answers"
-              }
-            },
-            required: ["text", "options"]
-          }
-        }
-      }
+    const response = await fetch(`${API_BASE}/parse-questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
     });
 
-    const parsedData = JSON.parse(cleanResponse(response.text));
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to parse questions');
+    }
 
-    // Add IDs to the questions
-    return parsedData.map((q: any, index: number) => ({
-      id: `q-${index}-${Date.now()}`,
-      text: q.text,
-      options: q.options
-    }));
+    return await response.json();
 
   } catch (error) {
     console.error("Error parsing questions with Gemini:", error);
@@ -67,44 +30,18 @@ export const adaptQuestionsForAccessibility = async (questions: Question[]): Pro
   if (questions.length === 0) return [];
 
   try {
-    const questionsJSON = JSON.stringify(questions.map(q => ({ text: q.text, options: q.options })));
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Adapt these exam questions for students with dyslexia or special reading needs (Easy Read format).
-      Rules:
-      1. Simplify sentence structure. Use active voice.
-      2. Avoid double negatives.
-      3. Bold key terms in the question using markdown **bold**.
-      4. Keep the options simple and direct.
-      5. Do NOT change the correct answer logic, just the phrasing.
-      
-      Questions JSON:
-      ${questionsJSON}`,
-      config: {
-        systemInstruction: "You are an expert in accessible education and Easy Read formatting.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              text: { type: Type.STRING },
-              options: { type: Type.ARRAY, items: { type: Type.STRING } }
-            },
-            required: ["text", "options"]
-          }
-        }
-      }
+    const response = await fetch(`${API_BASE}/adapt-questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions })
     });
 
-    const adaptedData = JSON.parse(cleanResponse(response.text));
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to adapt questions');
+    }
 
-    return adaptedData.map((q: any, index: number) => ({
-      id: questions[index]?.id ? `${questions[index].id}-adapted` : `adapted-${index}-${Date.now()}`,
-      text: q.text,
-      options: q.options
-    }));
+    return await response.json();
 
   } catch (error) {
     console.error("Error adapting questions:", error);
@@ -119,69 +56,18 @@ export const translateExamContent = async (
   if (questions.length === 0) return { questions: [], header };
 
   try {
-    const payload = {
-      header: header,
-      questions: questions.map(q => ({ id: q.id, text: q.text, options: q.options }))
-    };
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Translate the following exam content from Spanish to Valencian (Valencià).
-      Use the official normative (normativa oficial valenciana).
-      
-      Rules:
-      1. Translate the Title, Subtitle, Department, NameLabel, and CourseLabel in the header.
-      2. Translate all questions and options.
-      3. CRITICAL: Do NOT change the order of questions.
-      4. CRITICAL: Do NOT change the order of options within a question.
-      5. Keep the IDs exactly as they are.
-      
-      Input JSON:
-      ${JSON.stringify(payload)}`,
-      config: {
-        systemInstruction: "You are a professional translator specializing in academic Valencian.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            header: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                subtitle: { type: Type.STRING },
-                department: { type: Type.STRING },
-                courseLabel: { type: Type.STRING },
-                nameLabel: { type: Type.STRING },
-              }
-            },
-            questions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  text: { type: Type.STRING },
-                  options: { type: Type.ARRAY, items: { type: Type.STRING } }
-                }
-              }
-            }
-          }
-        }
-      }
+    const response = await fetch(`${API_BASE}/translate-exam`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions, header })
     });
 
-    // Usamos cleanResponse para evitar errores de parseo si la IA devuelve markdown
-    const translatedData = JSON.parse(cleanResponse(response.text));
-
-    // Verificación básica
-    if (!translatedData.questions || !translatedData.header) {
-      throw new Error("Invalid translation response structure");
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to translate');
     }
 
-    return {
-      questions: translatedData.questions,
-      header: translatedData.header
-    };
+    return await response.json();
 
   } catch (error) {
     console.error("Error translating exam:", error);
