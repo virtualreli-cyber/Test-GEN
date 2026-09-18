@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Bot, Printer, Settings2, FileText, RotateCcw, AlertCircle, LayoutTemplate, Shuffle, Download, RefreshCw, ZoomIn, ZoomOut, ArrowRightLeft, Plus, Minus, Accessibility, Languages, Database, FilePlus, Save, Check, X, RefreshCcw } from 'lucide-react';
-import { parseQuestionsFromText, adaptQuestionsForAccessibility, translateExamContent } from './services/geminiService';
+import { Printer, Settings2, FileText, RotateCcw, AlertCircle, LayoutTemplate, Shuffle, Download, RefreshCw, ZoomIn, ZoomOut, ArrowRightLeft, Plus, Minus, Accessibility, Database, FilePlus, Save, Check, X, Globe, Trash2 } from 'lucide-react';
 import { Question, ExamHeader, ExamSettings, GeneratedExam, SavedExam } from './types';
 import { ExamPaper } from './components/ExamPaper';
 import { ExamBank } from './components/ExamBank';
 import { cleanQuestionText, cleanOptionText } from './utils/textCleaner';
+import { detectLanguage } from './utils/languageDetector';
 
 // --- UTILITIES ---
 
@@ -100,11 +100,9 @@ export default function App() {
   // State
   const [inputText, setInputText] = useState<string>(SAMPLE_TEXT);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isAdapting, setIsAdapting] = useState(false);
-  const [isTranslating, setIsTranslating] = useState(false);
+  const [currentLanguage, setCurrentLanguage] = useState<'es' | 'va'>('es');
   
   const [parsedQuestions, setParsedQuestions] = useState<Question[]>([]);
-  
   const [generatedVersions, setGeneratedVersions] = useState<GeneratedExam[]>([]);
   const [currentVersionIndex, setCurrentVersionIndex] = useState(0);
   
@@ -120,9 +118,8 @@ export default function App() {
 
   // UI States
   const [error, setError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState(false); // Feedback visual
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [isBankOpen, setIsBankOpen] = useState(false);
-  const [languageTab, setLanguageTab] = useState<'es' | 'va'>('es');
   
   // Tracking State for Save/Update
   const [currentExamId, setCurrentExamId] = useState<string | null>(null);
@@ -138,7 +135,7 @@ export default function App() {
 
   // --- HELPERS ---
 
-  const createVersion = (baseQs: Question[], id: number, currentSettings: ExamSettings): GeneratedExam => {
+  const createVersion = (baseQs: Question[], id: number, currentSettings: ExamSettings, lang: 'es' | 'va'): GeneratedExam => {
       let questionsForVersion = baseQs.map(q => ({
         ...q,
         text: cleanQuestionText(q.text),
@@ -153,12 +150,12 @@ export default function App() {
           versionId: id, 
           questions: questionsForVersion, 
           type: 'standard',
-          language: 'es',
+          language: lang,
           label: `Ver. ${id}`
       };
   };
 
-  const updateVersionsWithNewContent = async (newBaseQuestions: Question[]) => {
+  const updateVersionsWithNewContent = (newBaseQuestions: Question[], lang: 'es' | 'va') => {
     const cleanedBaseQuestions = newBaseQuestions.map(q => ({
       ...q,
       text: cleanQuestionText(q.text),
@@ -166,107 +163,36 @@ export default function App() {
     }));
 
     if (generatedVersions.length === 0) {
-        const initialVersion = createVersion(cleanedBaseQuestions, 1, settings);
+        const initialVersion = createVersion(cleanedBaseQuestions, 1, settings, lang);
         setGeneratedVersions([initialVersion]);
         setCurrentVersionIndex(0);
         return;
     }
 
-    const updatedVersionsPromise = generatedVersions.map(async (version) => {
-        if (version.type === 'standard' && version.language === 'es') {
-            let qs = [...cleanedBaseQuestions];
-            if (settings.randomizeQuestions) qs = shuffleArray(qs);
-            qs = qs.map(q => {
-                if (settings.randomizeAnswers) return { ...q, options: shuffleArray(q.options) };
-                return q;
-            });
-            return { ...version, questions: qs };
-        } 
-        
-        if (version.type === 'adapted' && version.language === 'es') {
-            try {
-                const adaptedQs = await adaptQuestionsForAccessibility(cleanedBaseQuestions);
-                const cleanedAdapted = adaptedQs.map(q => ({
-                  ...q,
-                  text: cleanQuestionText(q.text),
-                  options: (q.options || []).map(cleanOptionText)
-                }));
-                return { ...version, questions: cleanedAdapted };
-            } catch (err) {
-                console.error("No se pudo actualizar la versión adaptada", err);
-                return version; 
-            }
-        }
-        
-        return version; 
+    const updated = generatedVersions.map(version => {
+      let qs = [...cleanedBaseQuestions];
+      if (settings.randomizeQuestions) qs = shuffleArray(qs);
+      qs = qs.map(q => {
+        if (settings.randomizeAnswers) return { ...q, options: shuffleArray(q.options) };
+        return q;
+      });
+      return {
+        ...version,
+        language: lang,
+        questions: qs
+      };
     });
-
-    const results = await Promise.all(updatedVersionsPromise);
-    setGeneratedVersions(results);
-    setCurrentVersionIndex(0); 
+    setGeneratedVersions(updated);
   };
 
   // --- ACTIONS ---
 
-  const handleNewExam = () => {
-    // Si hay trabajo en curso, confirmamos
-    const isDirty = parsedQuestions.length > 0 || (inputText.trim().length > 0 && inputText !== SAMPLE_TEXT);
-    
-    if (isDirty) {
-        if (!window.confirm("Se perderán los cambios no guardados. ¿Deseas empezar un examen nuevo?")) return;
-    }
-    
-    // Reseteo COMPLETO
-    setFormKey(prev => prev + 1); // Force re-mount of inputs
-    setInputText("");
-    setParsedQuestions([]);
-    setGeneratedVersions([]);
-    setHeader({ ...DEFAULT_HEADER });
-    setCurrentVersionIndex(0);
-    setLanguageTab('es');
+  const handleProcessText = (textToProcess: string = inputText) => {
     setError(null);
-    setCurrentExamId(null);
-    setCurrentExamName(null);
-    setIsSaveModalOpen(false);
-    
-    // Reset flags
-    setIsProcessing(false);
-    setIsAdapting(false);
-    setIsTranslating(false);
-    
-    // Resetear configuración
-    setSettings({
-        randomizeQuestions: false,
-        randomizeAnswers: false,
-        fontSize: 'base',
-    });
-  };
-
-  const handleProcessAI = async () => {
-    setIsProcessing(true);
-    setError(null);
-    try {
-      const questions = await parseQuestionsFromText(inputText);
-      const cleaned = questions.map(q => ({
-        ...q,
-        text: cleanQuestionText(q.text),
-        options: (q.options || []).map(cleanOptionText)
-      }));
-      setParsedQuestions(cleaned);
-      await updateVersionsWithNewContent(cleaned);
-    } catch (err) {
-      setError("Hubo un error al procesar el texto.");
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleManualRefresh = async () => {
-    setError(null);
-    if (!inputText.trim()) return;
+    if (!textToProcess.trim()) return;
     setIsProcessing(true);
     try {
-      const blocks = inputText.split(/\n\s*\n/);
+      const blocks = textToProcess.split(/\n\s*\n/);
       const manualQuestions: Question[] = blocks.map((block, idx) => {
         const lines = block.split('\n').map(l => l.trim()).filter(l => l);
         if (lines.length < 2) return null;
@@ -274,38 +200,75 @@ export default function App() {
         const options = lines.slice(1);
         const cleanOptions = options.map(opt => cleanOptionText(opt));
         return {
-          id: `manual-${idx}-${Date.now()}`,
+          id: `q-${idx}-${Date.now()}`,
           text: cleanQuestionText(text),
           options: cleanOptions
         };
       }).filter((q): q is Question => q !== null);
 
       if (manualQuestions.length === 0) {
-        setError("No se detectó un formato válido.");
+        setError("No se detectó un formato válido. Separa cada pregunta con una línea en blanco.");
         setIsProcessing(false);
         return;
       }
-      
+
+      // Detección automática heurística del idioma (sin IA)
+      const detectedLang = detectLanguage(textToProcess);
+      setCurrentLanguage(detectedLang);
+
       setParsedQuestions(manualQuestions);
-      await updateVersionsWithNewContent(manualQuestions);
+      updateVersionsWithNewContent(manualQuestions, detectedLang);
     } catch (err) {
-      setError("Error al procesar el texto manualmente.");
+      setError("Error al procesar el texto.");
     } finally {
       setIsProcessing(false);
     }
   };
 
+  // Cargar texto inicial al inicio
+  useEffect(() => {
+    handleProcessText(SAMPLE_TEXT);
+  }, []);
+
+  const handleNewExam = () => {
+    const isDirty = parsedQuestions.length > 0 || (inputText.trim().length > 0 && inputText !== SAMPLE_TEXT);
+    
+    if (isDirty) {
+        if (!window.confirm("Se perderán los cambios no guardados. ¿Deseas empezar un examen nuevo?")) return;
+    }
+    
+    setFormKey(prev => prev + 1);
+    setInputText("");
+    setParsedQuestions([]);
+    setGeneratedVersions([]);
+    setHeader({ ...DEFAULT_HEADER });
+    setCurrentVersionIndex(0);
+    setCurrentLanguage('es');
+    setError(null);
+    setCurrentExamId(null);
+    setCurrentExamName(null);
+    setIsSaveModalOpen(false);
+    setIsProcessing(false);
+    
+    setSettings({
+        randomizeQuestions: false,
+        randomizeAnswers: false,
+        fontSize: 'base',
+    });
+  };
+
   const handleAddVersion = () => {
       if (parsedQuestions.length === 0) return;
-      setLanguageTab('es'); 
-      const maxId = generatedVersions.reduce((max, v) => v.type === 'standard' && v.language === 'es' ? Math.max(max, v.versionId) : max, 0);
+      const standardVersions = generatedVersions.filter(v => v.type === 'standard');
+      const maxId = standardVersions.reduce((max, v) => Math.max(max, v.versionId), 0);
       const nextId = maxId + 1;
-      const newVersion = createVersion(parsedQuestions, nextId, settings);
+      const newVersion = createVersion(parsedQuestions, nextId, settings, currentLanguage);
       setGeneratedVersions(prev => [...prev, newVersion]);
+      setCurrentVersionIndex(generatedVersions.length);
   };
 
   const handleRemoveVersion = () => {
-      const standardVersions = generatedVersions.filter(v => v.type === 'standard' && v.language === 'es');
+      const standardVersions = generatedVersions.filter(v => v.type === 'standard');
       if (standardVersions.length <= 1) return;
       const lastStandard = standardVersions[standardVersions.length - 1];
       const newVersions = generatedVersions.filter(v => v !== lastStandard);
@@ -313,104 +276,55 @@ export default function App() {
       if (currentVersionIndex >= newVersions.length) setCurrentVersionIndex(newVersions.length - 1);
   };
 
-  const handleGenerateAdapted = async () => {
+  const handleCreateAdaptedVersion = () => {
       if (parsedQuestions.length === 0) return;
-      setLanguageTab('es');
-      setIsAdapting(true);
-      setError(null);
-      try {
-          const adaptedQuestions = await adaptQuestionsForAccessibility(parsedQuestions);
-          const cleanedAdapted = adaptedQuestions.map(q => ({
-            ...q,
-            text: cleanQuestionText(q.text),
-            options: (q.options || []).map(cleanOptionText)
-          }));
-          const existingAdaptedCount = generatedVersions.filter(v => v.type === 'adapted' && v.language === 'es').length;
-          const nextAdaptedId = existingAdaptedCount + 1;
-          const newVersion: GeneratedExam = {
-              versionId: nextAdaptedId,
-              questions: cleanedAdapted,
-              type: 'adapted',
-              language: 'es',
-              label: `Adaptada ${nextAdaptedId > 1 ? nextAdaptedId : ''}`.trim()
-          };
-          setGeneratedVersions(prev => [...prev, newVersion]);
-      } catch (err) {
-          setError("Error al generar la adaptación.");
-      } finally {
-          setIsAdapting(false);
+      const existingAdaptedCount = generatedVersions.filter(v => v.type === 'adapted').length;
+      const nextAdaptedId = existingAdaptedCount + 1;
+      
+      let questionsForVersion = parsedQuestions.map(q => ({
+        ...q,
+        text: cleanQuestionText(q.text),
+        options: (q.options || []).map(cleanOptionText)
+      }));
+      if (settings.randomizeQuestions) questionsForVersion = shuffleArray(questionsForVersion);
+      questionsForVersion = questionsForVersion.map(q => {
+        if (settings.randomizeAnswers) return { ...q, options: shuffleArray(q.options) };
+        return q;
+      });
+
+      const newVersion: GeneratedExam = {
+          versionId: nextAdaptedId,
+          questions: questionsForVersion,
+          type: 'adapted',
+          language: currentLanguage,
+          label: `Adaptada ${nextAdaptedId > 1 ? nextAdaptedId : ''}`.trim()
+      };
+      setGeneratedVersions(prev => [...prev, newVersion]);
+      setCurrentVersionIndex(generatedVersions.length);
+  };
+
+  const handleDeleteCurrentVersion = () => {
+      if (generatedVersions.length <= 1) return;
+      const newVersions = generatedVersions.filter((_, idx) => idx !== currentVersionIndex);
+      setGeneratedVersions(newVersions);
+      if (currentVersionIndex >= newVersions.length) {
+          setCurrentVersionIndex(Math.max(0, newVersions.length - 1));
       }
   };
 
-  const handleTranslateMissing = async () => {
-      if (generatedVersions.length === 0) return;
-      
-      setIsTranslating(true);
-      setError(null);
-
-      // Wrapper con timeout para evitar que se cuelgue infinitamente
-      const translateWithTimeout = async (promise: Promise<any>) => {
-          let timeoutHandle;
-          const timeoutPromise = new Promise((_, reject) => {
-              timeoutHandle = setTimeout(() => reject(new Error("La traducción tardó demasiado. Intenta con menos preguntas.")), 30000);
-          });
-          return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutHandle));
-      };
-
-      try {
-          const sourceVersions = generatedVersions.filter(v => v.language === 'es');
-          const existingTranslations = generatedVersions.filter(v => v.language === 'va');
-          
-          const versionsToTranslate = sourceVersions.filter(sv => {
-              const hasTranslation = existingTranslations.some(tv => 
-                  tv.sourceVersionId === sv.versionId && tv.type === sv.type
-              );
-              return !hasTranslation;
-          });
-
-          if (versionsToTranslate.length === 0) {
-              alert("Todas las versiones actuales ya tienen su traducción al Valenciano.");
-              setIsTranslating(false);
-              setLanguageTab('va'); 
-              return;
-          }
-          
-          const newTranslatedVersions: GeneratedExam[] = [];
-
-          for (const version of versionsToTranslate) {
-             const { questions: translatedQs, header: translatedHeader } = await translateWithTimeout(
-                 translateExamContent(version.questions, header)
-             ) as any;
-             
-             newTranslatedVersions.push({
-                 ...version,
-                 questions: (translatedQs || []).map((q: any) => ({
-                   ...q,
-                   text: cleanQuestionText(q.text),
-                   options: (q.options || []).map(cleanOptionText)
-                 })),
-                 localizedHeader: translatedHeader,
-                 language: 'va',
-                 label: `${version.label}`, 
-                 sourceVersionId: version.versionId 
-             });
-          }
-
-          setGeneratedVersions(prev => [...prev, ...newTranslatedVersions]);
-          setLanguageTab('va'); 
-
-      } catch (err: any) {
-          console.error(err);
-          setError(err.message || "Error durante la traducción.");
-      } finally {
-          setIsTranslating(false);
-      }
+  const handleSetLanguage = (lang: 'es' | 'va') => {
+      setCurrentLanguage(lang);
+      setGeneratedVersions(prev => prev.map(v => ({
+          ...v,
+          language: lang
+      })));
   };
 
   const handleShuffleCurrentVersion = (type: 'questions' | 'answers') => {
     setGeneratedVersions(prevVersions => {
       const newVersions = [...prevVersions];
       const currentVersion = newVersions[currentVersionIndex];
+      if (!currentVersion) return prevVersions;
       let newQuestions = currentVersion.questions.map(q => ({
         ...q,
         text: cleanQuestionText(q.text),
@@ -423,38 +337,6 @@ export default function App() {
       newVersions[currentVersionIndex] = { ...currentVersion, questions: newQuestions };
       return newVersions;
     });
-  };
-
-  // Función para restaurar el orden de las preguntas al original castellano
-  const handleSyncValencianOrder = () => {
-      const currentVer = generatedVersions[currentVersionIndex];
-      if (!currentVer || currentVer.language !== 'va' || !currentVer.sourceVersionId) return;
-
-      const sourceVer = generatedVersions.find(v => v.versionId === currentVer.sourceVersionId && v.language === 'es' && v.type === currentVer.type);
-      
-      if (!sourceVer) {
-          alert("No se encontró la versión original en castellano para sincronizar.");
-          return;
-      }
-
-      // Creamos un mapa de índices basado en los IDs de la versión original
-      // Asumimos que la traducción MANTIENE los IDs (como se instruye al prompt)
-      const targetIdOrder = sourceVer.questions.map(q => q.id);
-
-      const reorderedQuestions = [...currentVer.questions].sort((a, b) => {
-          const indexA = targetIdOrder.indexOf(a.id);
-          const indexB = targetIdOrder.indexOf(b.id);
-          // Si no encuentra el ID (raro), lo pone al final
-          if (indexA === -1) return 1;
-          if (indexB === -1) return -1;
-          return indexA - indexB;
-      });
-
-      setGeneratedVersions(prev => {
-          const newV = [...prev];
-          newV[currentVersionIndex] = { ...currentVer, questions: reorderedQuestions };
-          return newV;
-      });
   };
 
   // --- LOGICA DE GUARDADO ---
@@ -473,14 +355,11 @@ export default function App() {
       const savedExamsRaw = localStorage.getItem('examgen_bank');
       let savedExams: SavedExam[] = savedExamsRaw ? JSON.parse(savedExamsRaw) : [];
       
-      // Remover si existe (para sobrescribir)
       savedExams = savedExams.filter(e => e.id !== exam.id);
-      // Añadir al principio
       savedExams = [exam, ...savedExams];
       
       localStorage.setItem('examgen_bank', JSON.stringify(savedExams));
       
-      // Feedback UI
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
   };
@@ -491,7 +370,6 @@ export default function App() {
           return;
       }
 
-      // CASO 1: Examen ya existe -> GUARDADO AUTOMÁTICO (Sobrescribir)
       if (currentExamId && currentExamName) {
           const updatedExam: SavedExam = {
               ...examToSave,
@@ -503,7 +381,6 @@ export default function App() {
           return;
       }
 
-      // CASO 2: Examen Nuevo -> Pedir Nombre
       setNewExamNameInput(header.title || '');
       setIsSaveModalOpen(true);
       setTimeout(() => saveNameInputRef.current?.focus(), 100);
@@ -527,7 +404,6 @@ export default function App() {
   };
 
   const handleLoadExam = (saved: SavedExam) => {
-      // Si hay cambios no guardados en un examen diferente, avisar
       if (parsedQuestions.length > 0 && currentExamId !== saved.id) {
           if(!window.confirm("Cargar un examen reemplazará el trabajo actual. ¿Continuar?")) return;
       }
@@ -554,7 +430,9 @@ export default function App() {
         setSettings(safeSettings);
         setGeneratedVersions(safeVersions);
         setCurrentVersionIndex(0);
-        setLanguageTab('es');
+        
+        const loadedLang = safeVersions[0]?.language || (safeQuestions.length > 0 ? detectLanguage(safeQuestions.map(q => q.text).join(' ')) : 'es');
+        setCurrentLanguage(loadedLang);
         
         if (safeQuestions.length > 0) {
             const text = safeQuestions.map(q => `${q.text}\n${q.options.join('\n')}`).join('\n\n');
@@ -570,22 +448,6 @@ export default function App() {
   };
 
   // --- UI HELPERS ---
-
-  const visibleVersions = useMemo(() => {
-      return generatedVersions.filter(v => v.language === languageTab);
-  }, [generatedVersions, languageTab]);
-
-  useEffect(() => {
-     if (visibleVersions.length > 0) {
-         const selectedGlobal = generatedVersions[currentVersionIndex];
-         if (selectedGlobal && selectedGlobal.language !== languageTab) {
-             const firstOfLangIndex = generatedVersions.findIndex(v => v.language === languageTab);
-             if (firstOfLangIndex !== -1) {
-                 setCurrentVersionIndex(firstOfLangIndex);
-             }
-         }
-     }
-  }, [languageTab, generatedVersions, currentVersionIndex, visibleVersions]);
 
   const currentPaginatedExam = useMemo(() => {
     if (generatedVersions.length === 0) return [];
@@ -608,8 +470,9 @@ export default function App() {
     const tailwindLink = '<script src="https://cdn.tailwindcss.com"></script>';
     const criticalCSS = `
       <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lexend:wght@400;500;600;700&display=swap');
         body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background: white; }
+        .font-accessible { font-family: 'Lexend', sans-serif !important; letter-spacing: 0.03em; }
         .exam-columns { column-count: 2; column-gap: 2rem; width: 100%; height: 100%; }
         .question-card { break-inside: avoid; page-break-inside: avoid; display: inline-block; width: 100%; margin-bottom: 1rem; }
         .paper-sheet {
@@ -667,7 +530,7 @@ export default function App() {
                         ref={saveNameInputRef}
                         type="text" 
                         className="w-full border border-gray-300 rounded-lg p-3 mb-4 focus:ring-2 focus:ring-indigo-500 outline-none"
-                        placeholder="Ej: Matemáticas Tema 1"
+                        placeholder="Ej: Religión Tema 1"
                         value={newExamNameInput}
                         onChange={(e) => setNewExamNameInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && confirmSaveNew()}
@@ -686,7 +549,7 @@ export default function App() {
           <div className="p-4 border-b border-gray-100 bg-indigo-600 text-white flex items-center justify-between">
             <div className="flex items-center space-x-2">
                 <FileText size={24} />
-                <h1 className="font-bold text-xl">ExamGen AI</h1>
+                <h1 className="font-bold text-xl">ExamGen</h1>
             </div>
             <div className="flex gap-2">
                  <button 
@@ -720,7 +583,7 @@ export default function App() {
             <section>
                <div className="flex justify-between items-center mb-2">
                   <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                      <Bot size={16} className="text-indigo-600"/>
+                      <FileText size={16} className="text-indigo-600"/>
                       Entrada de Texto
                   </label>
                   {currentExamId && (
@@ -736,14 +599,26 @@ export default function App() {
                 placeholder="Escribe aquí tus preguntas o pega el texto..."
               ></textarea>
               {error && <div className="mt-2 p-2 bg-red-50 text-red-600 text-xs rounded flex items-center gap-2"><AlertCircle size={14}/>{error}</div>}
-              <div className="grid grid-cols-2 gap-2 mt-3">
-                 <button onClick={handleManualRefresh} disabled={!inputText.trim() || isProcessing} className="py-2.5 px-3 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 flex items-center justify-center gap-2 text-sm disabled:opacity-50">
-                   {isProcessing && !isAdapting && !isTranslating ? <RotateCcw className="animate-spin" size={16} /> : <RefreshCw size={16} />} 
-                   {isProcessing && !isAdapting && !isTranslating ? 'Cargando...' : 'Vista Rápida'}
-                </button>
-                <button onClick={handleProcessAI} disabled={isProcessing || !inputText.trim()} className={`py-2.5 px-3 rounded-lg text-white font-medium flex items-center justify-center gap-2 text-sm transition-all ${isProcessing ? 'bg-gray-300' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-                  {isProcessing ? <RotateCcw className="animate-spin" size={16} /> : <Bot size={16} />} {isProcessing ? "IA..." : "IA (Mejorar)"}
-                </button>
+              
+              <div className="mt-3 space-y-2">
+                 <button 
+                   onClick={() => handleProcessText()} 
+                   disabled={!inputText.trim() || isProcessing} 
+                   className="w-full py-2.5 px-4 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2 text-sm disabled:opacity-50 shadow-sm"
+                 >
+                   {isProcessing ? <RotateCcw className="animate-spin" size={16} /> : <RefreshCw size={16} />} 
+                   {isProcessing ? 'Procesando...' : 'Actualizar Examen'}
+                 </button>
+
+                 <div className="flex items-center justify-between text-xs text-gray-500 pt-1 px-1 bg-gray-50 p-2 rounded-md border border-gray-200/60">
+                    <span className="flex items-center gap-1.5">
+                      <Globe size={14} className="text-gray-400" />
+                      Idioma detectado:
+                    </span>
+                    <span className={`font-semibold px-2 py-0.5 rounded text-[11px] ${currentLanguage === 'va' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}`}>
+                      {currentLanguage === 'va' ? '🥘 Valencià' : '🇪🇸 Castellano'}
+                    </span>
+                 </div>
               </div>
             </section>
 
@@ -786,7 +661,7 @@ export default function App() {
                              onChange={(e) => setSettings(s => ({...s, randomizeQuestions: e.target.checked}))}
                              className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                            />
-                           <span>Aleatorizar preguntas al crear versiones</span>
+                           <span>Aleatorizar orden de preguntas al crear versiones</span>
                        </label>
                        <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer select-none">
                            <input 
@@ -795,31 +670,32 @@ export default function App() {
                              onChange={(e) => setSettings(s => ({...s, randomizeAnswers: e.target.checked}))}
                              className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                            />
-                           <span>Aleatorizar respuestas al crear versiones</span>
+                           <span>Aleatorizar opciones de respuesta al crear versiones</span>
                        </label>
                    </div>
                   
-                  {/* CONTROL DE VERSIONES ACTUALIZADO */}
+                  {/* CONTROL DE VERSIONES Y ADAPTACIÓN */}
                   <div className="pt-2">
-                      <label className="text-xs text-gray-500 block mb-2">Gestión de Versiones (Castellano)</label>
+                      <label className="text-xs text-gray-500 block mb-2">Gestión de Versiones</label>
                       <div className="flex gap-2">
-                          <div className="flex items-center bg-gray-100 rounded-lg p-1">
-                              <button onClick={handleRemoveVersion} className="p-2 hover:bg-white rounded text-gray-600 hover:text-red-500 disabled:opacity-50" disabled={generatedVersions.filter(v => v.type === 'standard' && v.language === 'es').length <= 1}>
+                          <div className="flex items-center bg-gray-100 rounded-lg p-1" title="Número de versiones estándar">
+                              <button onClick={handleRemoveVersion} className="p-2 hover:bg-white rounded text-gray-600 hover:text-red-500 disabled:opacity-50" disabled={generatedVersions.filter(v => v.type === 'standard').length <= 1}>
                                   <Minus size={16}/>
                               </button>
-                              <span className="w-8 text-center text-sm font-medium">{generatedVersions.filter(v => v.type === 'standard' && v.language === 'es').length}</span>
-                              <button onClick={handleAddVersion} disabled={generatedVersions.length === 0} className="p-2 hover:bg-white rounded text-gray-600 hover:text-green-600 disabled:opacity-50">
+                              <span className="w-8 text-center text-sm font-medium">{generatedVersions.filter(v => v.type === 'standard').length}</span>
+                              <button onClick={handleAddVersion} disabled={parsedQuestions.length === 0} className="p-2 hover:bg-white rounded text-gray-600 hover:text-green-600 disabled:opacity-50">
                                   <Plus size={16}/>
                               </button>
                           </div>
                           
                           <button 
-                            onClick={handleGenerateAdapted} 
-                            disabled={parsedQuestions.length === 0 || isAdapting || isTranslating}
-                            className={`flex-1 flex items-center justify-center gap-2 text-xs font-medium rounded-lg px-2 border transition-all ${isAdapting ? 'bg-indigo-50 border-indigo-200 text-indigo-400' : 'bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-50 shadow-sm'}`}
+                            onClick={handleCreateAdaptedVersion} 
+                            disabled={parsedQuestions.length === 0}
+                            className="flex-1 flex items-center justify-center gap-2 text-xs font-semibold rounded-lg px-3 py-2 border bg-indigo-50/80 border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm transition-all disabled:opacity-50"
+                            title="Genera una versión adaptada para personas con dislexia y/o TDAH con formato accesible, tipografía Lexend y realce de términos clave"
                           >
-                             {isAdapting ? <RotateCcw className="animate-spin" size={14}/> : <Accessibility size={16} />}
-                             {isAdapting ? 'Creando...' : 'Crear Adaptada'}
+                             <Accessibility size={16} className="text-indigo-600" />
+                             <span>Adaptar (Dislexia / TDAH)</span>
                           </button>
                       </div>
                   </div>
@@ -838,74 +714,67 @@ export default function App() {
           
           {/* Top Toolbar */}
           <div className="bg-white border-b border-gray-200 flex flex-col z-20 shrink-0 shadow-sm">
-             
-             {/* TABS DE IDIOMA */}
-             <div className="flex px-4 pt-2 gap-4 border-b border-gray-100">
-                <button 
-                    onClick={() => setLanguageTab('es')}
-                    className={`pb-2 px-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${languageTab === 'es' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-                >
-                    <span className="text-lg">🇪🇸</span> Castellano
-                </button>
-                <button 
-                    onClick={() => setLanguageTab('va')}
-                    className={`pb-2 px-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${languageTab === 'va' ? 'border-yellow-500 text-yellow-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-                >
-                     <span className="text-lg">🥘</span> Valencià
-                </button>
-             </div>
-
-             <div className="h-14 flex items-center justify-between px-4">
-                <div className="flex items-center gap-4 flex-1 overflow-hidden">
-                     {/* Version Switcher (Filtered by Language) */}
-                    {visibleVersions.length > 0 ? (
+             <div className="h-14 flex items-center justify-between px-4 gap-2">
+                
+                {/* Version Selector Buttons */}
+                <div className="flex items-center gap-2 flex-1 overflow-hidden">
+                    {generatedVersions.length > 0 ? (
                        <div className="bg-gray-100 p-1 rounded-lg flex gap-1 overflow-x-auto max-w-full scrollbar-hide">
-                            {visibleVersions.map((v) => {
-                                // Find global index
-                                const globalIndex = generatedVersions.indexOf(v);
-                                const isActive = currentVersionIndex === globalIndex;
+                            {generatedVersions.map((v, idx) => {
+                                const isActive = currentVersionIndex === idx;
                                 return (
                                     <button 
-                                        key={`${v.type}-${v.versionId}-${v.language}`} 
-                                        onClick={() => setCurrentVersionIndex(globalIndex)} 
-                                        className={`px-3 py-1 text-xs font-medium rounded-md whitespace-nowrap flex items-center gap-1 transition-all flex-shrink-0 ${isActive ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5' : 'text-gray-500 hover:bg-gray-200'}`}
+                                        key={`${v.type}-${v.versionId}-${idx}`} 
+                                        onClick={() => setCurrentVersionIndex(idx)} 
+                                        className={`px-3 py-1 text-xs font-medium rounded-md whitespace-nowrap flex items-center gap-1.5 transition-all flex-shrink-0 ${isActive ? 'bg-white text-indigo-700 font-bold shadow-sm ring-1 ring-black/5' : 'text-gray-500 hover:bg-gray-200'}`}
                                     >
-                                        {v.type === 'adapted' && <Accessibility size={12} className="-ml-1" />}
-                                        {v.label || `Ver. ${v.versionId}`}
+                                        {v.type === 'adapted' ? (
+                                            <span className="flex items-center gap-1 text-indigo-600">
+                                              <Accessibility size={13} />
+                                              {v.label || `Adaptada ${v.versionId}`}
+                                            </span>
+                                        ) : (
+                                            <span>{v.label || `Ver. ${v.versionId}`}</span>
+                                        )}
                                     </button>
                                 );
                             })}
                        </div>
                     ) : (
-                        // Empty State for Tab
-                        <div className="text-xs text-gray-400 flex items-center gap-2 italic">
-                            {languageTab === 'va' ? 'No hay traducciones aún.' : 'Genera una versión para empezar.'}
-                            {languageTab === 'va' && parsedQuestions.length > 0 && (
-                                 <button 
-                                    onClick={handleTranslateMissing}
-                                    className="bg-yellow-50 text-yellow-700 px-2 py-1 rounded border border-yellow-200 font-medium hover:bg-yellow-100 flex items-center gap-1"
-                                    disabled={isTranslating}
-                                 >
-                                     <Languages size={12}/> {isTranslating ? 'Traduciendo...' : 'Traducir todo ahora'}
-                                 </button>
-                            )}
+                        <div className="text-xs text-gray-400 italic">
+                            Introduce preguntas para previsualizar el examen.
                         </div>
+                    )}
+
+                    {generatedVersions.length > 1 && (
+                      <button 
+                        onClick={handleDeleteCurrentVersion}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0"
+                        title="Eliminar esta versión"
+                      >
+                        <Trash2 size={15} />
+                      </button>
                     )}
                 </div>
 
-                 <div className="flex items-center gap-3 ml-4">
-                     {/* Translation Action (If in Valencian Tab and revisions exist) */}
-                     {languageTab === 'va' && visibleVersions.length > 0 && (
-                          <button 
-                             onClick={handleTranslateMissing}
-                             className="text-xs font-medium text-yellow-700 hover:underline flex items-center gap-1 mr-2"
-                             title="Traducir nuevas versiones o adaptaciones"
-                             disabled={isTranslating}
-                          >
-                             {isTranslating ? <RotateCcw className="animate-spin" size={12}/> : <Languages size={12}/>}
-                             {isTranslating ? '...' : 'Actualizar'}
-                          </button>
-                     )}
+                 <div className="flex items-center gap-3 shrink-0">
+                     {/* Language Switcher (Cabeceras y partes generales) */}
+                     <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                        <button 
+                            onClick={() => handleSetLanguage('es')}
+                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1 ${currentLanguage === 'es' ? 'bg-white text-indigo-700 shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-800'}`}
+                            title="General en Castellano"
+                        >
+                            <span>🇪🇸</span> Castellano
+                        </button>
+                        <button 
+                            onClick={() => handleSetLanguage('va')}
+                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1 ${currentLanguage === 'va' ? 'bg-white text-amber-700 shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-800'}`}
+                            title="General en Valencià"
+                        >
+                            <span>🥘</span> Valencià
+                        </button>
+                     </div>
 
                      {/* Zoom Controls */}
                      <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
@@ -915,22 +784,11 @@ export default function App() {
                      </div>
 
                      {/* Action Buttons */}
-                     <div className="flex items-center gap-1 border-l pl-4 border-gray-300">
-                         {languageTab === 'va' && (
-                             <button 
-                                onClick={handleSyncValencianOrder} 
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-yellow-700 hover:bg-yellow-50 rounded-lg transition-colors mr-1"
-                                title="Sincronizar orden con original (Deshacer mezcla)"
-                             >
-                                <RefreshCcw size={14}/> 
-                                <span className="hidden 2xl:inline">Orden ES</span>
-                             </button>
-                         )}
-
+                     <div className="flex items-center gap-1 border-l pl-3 border-gray-300">
                          <button 
                             onClick={() => handleShuffleCurrentVersion('questions')} 
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                            title="Mezclar Preguntas"
+                            title="Mezclar contenido de preguntas (la numeración 1, 2, 3... permanece fija)"
                          >
                             <Shuffle size={14}/> 
                             <span className="hidden xl:inline">Preguntas</span>
@@ -938,7 +796,7 @@ export default function App() {
                          <button 
                             onClick={() => handleShuffleCurrentVersion('answers')} 
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                            title="Mezclar Respuestas"
+                            title="Mezclar opciones de respuesta"
                          >
                             <ArrowRightLeft size={14}/> 
                             <span className="hidden xl:inline">Respuestas</span>
@@ -970,14 +828,14 @@ export default function App() {
                       
                       return (
                           <ExamPaper 
-                             key={`${currentVer.versionId}-${pageIdx}`}
+                             key={`${currentVer.type}-${currentVer.versionId}-${currentVer.language}-${pageIdx}`}
                              questions={pageQuestions}
                              startIndex={startIndex}
-                             header={currentVer.localizedHeader || header}
+                             header={header}
                              versionId={currentVer.versionId}
                              fontSize={settings.fontSize}
                              examType={currentVer.type}
-                             language={currentVer.language}
+                             language={currentVer.language || currentLanguage}
                              pageNumber={pageIdx + 1}
                              totalPages={currentPaginatedExam.length}
                           />
@@ -1008,11 +866,11 @@ export default function App() {
                       key={`${version.type}-${version.versionId}-${version.language}-${pageIdx}`}
                       questions={pageQuestions}
                       startIndex={startIndex}
-                      header={version.localizedHeader || header}
+                      header={header}
                       versionId={version.versionId}
                       fontSize={settings.fontSize}
                       examType={version.type}
-                      language={version.language}
+                      language={version.language || currentLanguage}
                       pageNumber={pageIdx + 1}
                       totalPages={pages.length}
                    />

@@ -1,6 +1,8 @@
 import React from 'react';
 import { Question, ExamHeader } from '../types';
 import { cleanQuestionText, cleanOptionText } from '../utils/textCleaner';
+import { getLocalizedHeader } from '../utils/languageDetector';
+import { parseAccessibleQuestionText } from '../utils/accessibleExam';
 
 interface ExamPaperProps {
   questions: Question[];
@@ -25,11 +27,13 @@ export const ExamPaper: React.FC<ExamPaperProps> = ({
   totalPages,
   startIndex = 1
 }) => {
+  // Traducir automáticamente las partes generales según el idioma
+  const effectiveHeader = getLocalizedHeader(header, language);
   
   let containerClasses = "";
   
   if (examType === 'adapted') {
-    containerClasses = "text-lg leading-loose tracking-wide font-sans"; 
+    containerClasses = "text-base leading-relaxed tracking-wide font-accessible"; 
   } else {
     const textSizeClass = {
         'sm': 'text-xs',
@@ -46,21 +50,24 @@ export const ExamPaper: React.FC<ExamPaperProps> = ({
     ? `${new Date().getFullYear()}-${versionId.toString().padStart(3, '0')}${examType === 'adapted' ? 'A' : ''}${language === 'va' ? 'V' : ''}`
     : null;
 
-  // Textos fijos según idioma (aunque el header viene traducido, el footer no)
+  // Textos fijos según idioma
   const pageLabel = language === 'va' ? 'Pàgina' : 'Página';
   const ofLabel = language === 'va' ? 'de' : 'de';
+  const formattedDate = language === 'va' 
+    ? new Date().toLocaleDateString('ca-ES') 
+    : new Date().toLocaleDateString('es-ES');
 
   return (
-    <div className={`paper-sheet text-black ${examType === 'adapted' ? 'font-medium' : ''}`}>
+    <div className={`paper-sheet text-black ${examType === 'adapted' ? 'font-accessible' : ''}`}>
       
       {/* --- ENCABEZADO SUPERIOR (Running Header) --- */}
       <div className="w-full flex justify-between items-center border-b-2 border-gray-800 pb-2 mb-4 h-[15mm]">
-         <span className="uppercase font-bold tracking-wider text-xs">{header.department}</span>
+         <span className="uppercase font-bold tracking-wider text-xs">{effectiveHeader.department}</span>
          <div className="flex gap-4 text-xs">
-            <span className="font-semibold text-gray-600 truncate max-w-[300px] uppercase">{header.title}</span>
+            <span className="font-semibold text-gray-600 truncate max-w-[300px] uppercase">{effectiveHeader.title}</span>
             <div className="flex gap-1">
                 {language === 'va' && <span className="bg-yellow-100 text-yellow-800 px-1 rounded text-[10px] font-bold border border-yellow-200">VAL</span>}
-                {examType === 'adapted' && <span className="bg-indigo-100 text-indigo-800 px-1 rounded text-[10px] font-bold border border-indigo-200" title="Versión Adaptada">A.C.</span>}
+                {examType === 'adapted' && <span className="bg-indigo-100 text-indigo-800 px-1 rounded text-[10px] font-bold border border-indigo-200" title="Versión Adaptada (Dislexia / TDAH)">A.C.</span>}
             </div>
          </div>
       </div>
@@ -70,20 +77,20 @@ export const ExamPaper: React.FC<ExamPaperProps> = ({
         <div className="mb-6 pb-4 border-b border-gray-200">
           <div className="flex flex-row justify-between items-start gap-8">
             <div className="flex-1">
-              <h1 className="text-2xl font-black uppercase tracking-tight leading-none mb-2">{header.title}</h1>
-              <h2 className="text-lg font-medium text-gray-700">{header.subtitle}</h2>
+              <h1 className="text-2xl font-black uppercase tracking-tight leading-none mb-2">{effectiveHeader.title}</h1>
+              <h2 className="text-lg font-medium text-gray-700">{effectiveHeader.subtitle}</h2>
             </div>
             
             <div className="w-1/3 flex flex-col items-end space-y-3 pt-1">
                <div className="w-full">
                   <div className="flex items-end border-b border-gray-400 pb-1">
-                      <span className="text-[10px] font-bold mr-2 uppercase w-12 text-right text-gray-500">{header.nameLabel}</span>
+                      <span className="text-[10px] font-bold mr-2 uppercase w-12 text-right text-gray-500">{effectiveHeader.nameLabel}</span>
                       <span className="flex-grow"></span>
                   </div>
               </div>
               <div className="w-full">
                   <div className="flex items-end border-b border-gray-400 pb-1">
-                      <span className="text-[10px] font-bold mr-2 uppercase w-12 text-right text-gray-500">{header.courseLabel}</span>
+                      <span className="text-[10px] font-bold mr-2 uppercase w-12 text-right text-gray-500">{effectiveHeader.courseLabel}</span>
                       <span className="flex-grow"></span>
                   </div>
               </div>
@@ -94,28 +101,55 @@ export const ExamPaper: React.FC<ExamPaperProps> = ({
 
       {/* --- CUERPO DE PREGUNTAS (Columnas) --- */}
       <div className="paper-content">
-        <div className={`exam-columns text-justify ${containerClasses}`}>
+        <div className={`exam-columns ${examType === 'adapted' ? 'text-left' : 'text-justify'} ${containerClasses}`}>
           {questions.map((q, idx) => {
             const questionNumber = startIndex + idx;
             const cleanedText = cleanQuestionText(q.text);
+            const isAdapted = examType === 'adapted';
+            const chunks = parseAccessibleQuestionText(cleanedText, isAdapted);
+
             return (
-              <div key={q.id} className="question-card group">
-                <div className="font-bold mb-1 text-gray-900 flex gap-1.5 items-baseline">
-                  <span className="select-none font-bold text-indigo-900 shrink-0">{questionNumber}.</span>
-                  <span>
-                      {cleanedText.split(/(\*\*.*?\*\*)/).map((part, i) => 
-                          part.startsWith('**') && part.endsWith('**') 
-                          ? <strong key={i} className="text-black bg-yellow-100/50 px-0.5 rounded">{part.slice(2, -2)}</strong> 
-                          : part
-                      )}
+              <div 
+                key={q.id} 
+                className={`question-card group ${isAdapted ? 'p-3.5 bg-slate-50/80 rounded-xl border border-slate-200/90 border-l-4 border-l-indigo-600 mb-4 shadow-sm' : ''}`}
+              >
+                <div className="font-bold mb-1.5 text-gray-900 flex gap-1.5 items-baseline">
+                  {isAdapted ? (
+                    <span className="select-none font-black text-indigo-900 bg-indigo-100/90 border border-indigo-200 px-2 py-0.5 rounded text-xs shrink-0 mr-1">
+                      {questionNumber}.
+                    </span>
+                  ) : (
+                    <span className="select-none font-bold text-indigo-900 shrink-0">{questionNumber}.</span>
+                  )}
+                  <span className={isAdapted ? 'leading-relaxed' : ''}>
+                      {chunks.map((chunk, i) => {
+                        if (chunk.isCritical) {
+                          return (
+                            <span 
+                              key={i} 
+                              className="underline decoration-2 decoration-amber-500 font-extrabold bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-xs mx-0.5 tracking-normal shadow-xs"
+                            >
+                              {chunk.text}
+                            </span>
+                          );
+                        }
+                        if (chunk.isBoldMarkdown) {
+                          return (
+                            <strong key={i} className="text-black bg-yellow-100/60 px-0.5 rounded">
+                              {chunk.text}
+                            </strong>
+                          );
+                        }
+                        return <span key={i}>{chunk.text}</span>;
+                      })}
                   </span>
                 </div>
-                <ul className={`pl-3 ${examType === 'adapted' ? 'space-y-2' : 'space-y-0.5'}`}>
+                <ul className={`pl-3 ${isAdapted ? 'space-y-2.5 mt-2' : 'space-y-0.5'}`}>
                   {q.options.map((opt, optIdx) => {
                     const cleanedOpt = cleanOptionText(opt);
                     return (
                       <li key={optIdx} className="flex items-baseline relative">
-                        <span className={`flex-shrink-0 rounded-full border border-gray-400 flex items-center justify-center font-bold text-gray-600 mr-2 mt-0.5 ${examType === 'adapted' ? 'w-6 h-6 text-xs' : 'w-4 h-4 text-[9px]'}`}>
+                        <span className={`flex-shrink-0 rounded-full flex items-center justify-center font-bold mr-2 mt-0.5 ${isAdapted ? 'w-6 h-6 text-xs bg-indigo-50/80 border-2 border-indigo-400 text-indigo-900' : 'w-4 h-4 text-[9px] border border-gray-400 text-gray-600 font-bold'}`}>
                           {String.fromCharCode(97 + optIdx)}
                         </span>
                         <span className="text-gray-800">{cleanedOpt}</span>
@@ -132,7 +166,7 @@ export const ExamPaper: React.FC<ExamPaperProps> = ({
       {/* --- PIE DE PÁGINA --- */}
       <div className="h-[10mm] border-t border-gray-200 mt-auto flex items-end justify-between text-[10px] text-gray-400">
          <div className="flex gap-4">
-            <span>{new Date().toLocaleDateString()}</span>
+            <span>{formattedDate}</span>
             {stealthVersionCode && (
                 <span className="text-gray-300 font-mono select-none">Ref: {stealthVersionCode}</span>
             )}
