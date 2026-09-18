@@ -8,6 +8,26 @@ const cleanResponse = (text) => {
   return cleaned;
 };
 
+const cleanQuestionText = (text) => {
+  if (!text) return "";
+  return text
+    .replace(
+      /^\s*(?:(?:pregunta|qüestió|questio|p|question|q)\s*\.?\s*\d+\s*(?:[-–—]|[\.\)\-:])*|(?:\(?\d{1,3}\)?(?:[\.\-:]+|[-–—])+\s+|\(?\d{1,3}\)\s*))\s*/i,
+      ""
+    )
+    .trim();
+};
+
+const cleanOptionText = (text) => {
+  if (!text) return "";
+  return text
+    .replace(
+      /^\s*(?:(?:\(?[a-zA-Z]\)?[\.\)\-:]+|\([a-zA-Z0-9]\)|\d{1,2}\))\s*|(?:\(?\d{1,2}\)?(?:[\.\-:]+|[-–—])+|[-*•])\s+)\s*/,
+      ""
+    )
+    .trim();
+};
+
 export const handler = async (event) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -55,6 +75,7 @@ export const handler = async (event) => {
       3. CRITICAL: Do NOT change the order of questions.
       4. CRITICAL: Do NOT change the order of options within a question.
       5. Keep the IDs exactly as they are.
+      6. Do NOT add question numbers or option letters/bullets.
       
       Input JSON:
       ${JSON.stringify(payload)}`,
@@ -96,11 +117,17 @@ export const handler = async (event) => {
       throw new Error("Invalid translation response structure");
     }
 
+    const sanitizedQuestions = translatedData.questions.map((q) => ({
+      id: q.id,
+      text: cleanQuestionText(q.text),
+      options: (q.options || []).map(cleanOptionText)
+    }));
+
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        questions: translatedData.questions,
+        questions: sanitizedQuestions,
         header: translatedData.header
       })
     };

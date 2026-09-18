@@ -1,5 +1,6 @@
 import React from 'react';
 import { Question, ExamHeader } from '../types';
+import { cleanQuestionText, cleanOptionText } from '../utils/textCleaner';
 
 interface ExamPaperProps {
   questions: Question[];
@@ -10,17 +11,19 @@ interface ExamPaperProps {
   language?: 'es' | 'va'; // Prop de idioma
   pageNumber: number;
   totalPages: number;
+  startIndex?: number; // Numeración inicial de preguntas para la página
 }
 
 export const ExamPaper: React.FC<ExamPaperProps> = ({ 
   questions, 
   header, 
   versionId, 
-  fontSize,
-  examType,
-  language = 'es',
-  pageNumber,
-  totalPages
+  fontSize, 
+  examType, 
+  language = 'es', 
+  pageNumber, 
+  totalPages,
+  startIndex = 1
 }) => {
   
   let containerClasses = "";
@@ -92,30 +95,37 @@ export const ExamPaper: React.FC<ExamPaperProps> = ({
       {/* --- CUERPO DE PREGUNTAS (Columnas) --- */}
       <div className="paper-content">
         <div className={`exam-columns text-justify ${containerClasses}`}>
-          {questions.map((q, idx) => (
-            <div key={q.id} className="question-card group">
-              <div className="font-bold mb-1 text-gray-900 flex gap-1">
-                <span className="select-none text-indigo-900">►</span>
-                <span>
-                    {q.text.split(/(\*\*.*?\*\*)/).map((part, i) => 
-                        part.startsWith('**') && part.endsWith('**') 
-                        ? <strong key={i} className="text-black bg-yellow-100/50 px-0.5 rounded">{part.slice(2, -2)}</strong> 
-                        : part
-                    )}
-                </span>
+          {questions.map((q, idx) => {
+            const questionNumber = startIndex + idx;
+            const cleanedText = cleanQuestionText(q.text);
+            return (
+              <div key={q.id} className="question-card group">
+                <div className="font-bold mb-1 text-gray-900 flex gap-1.5 items-baseline">
+                  <span className="select-none font-bold text-indigo-900 shrink-0">{questionNumber}.</span>
+                  <span>
+                      {cleanedText.split(/(\*\*.*?\*\*)/).map((part, i) => 
+                          part.startsWith('**') && part.endsWith('**') 
+                          ? <strong key={i} className="text-black bg-yellow-100/50 px-0.5 rounded">{part.slice(2, -2)}</strong> 
+                          : part
+                      )}
+                  </span>
+                </div>
+                <ul className={`pl-3 ${examType === 'adapted' ? 'space-y-2' : 'space-y-0.5'}`}>
+                  {q.options.map((opt, optIdx) => {
+                    const cleanedOpt = cleanOptionText(opt);
+                    return (
+                      <li key={optIdx} className="flex items-baseline relative">
+                        <span className={`flex-shrink-0 rounded-full border border-gray-400 flex items-center justify-center font-bold text-gray-600 mr-2 mt-0.5 ${examType === 'adapted' ? 'w-6 h-6 text-xs' : 'w-4 h-4 text-[9px]'}`}>
+                          {String.fromCharCode(97 + optIdx)}
+                        </span>
+                        <span className="text-gray-800">{cleanedOpt}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-              <ul className={`pl-3 ${examType === 'adapted' ? 'space-y-2' : 'space-y-0.5'}`}>
-                {q.options.map((opt, optIdx) => (
-                  <li key={optIdx} className="flex items-baseline relative">
-                    <span className={`flex-shrink-0 rounded-full border border-gray-400 flex items-center justify-center font-bold text-gray-600 mr-2 mt-0.5 ${examType === 'adapted' ? 'w-6 h-6 text-xs' : 'w-4 h-4 text-[9px]'}`}>
-                      {String.fromCharCode(97 + optIdx)}
-                    </span>
-                    <span className="text-gray-800">{opt}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

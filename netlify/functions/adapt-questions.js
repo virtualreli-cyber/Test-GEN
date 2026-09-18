@@ -8,6 +8,26 @@ const cleanResponse = (text) => {
   return cleaned;
 };
 
+const cleanQuestionText = (text) => {
+  if (!text) return "";
+  return text
+    .replace(
+      /^\s*(?:(?:pregunta|qüestió|questio|p|question|q)\s*\.?\s*\d+\s*(?:[-–—]|[\.\)\-:])*|(?:\(?\d{1,3}\)?(?:[\.\-:]+|[-–—])+\s+|\(?\d{1,3}\)\s*))\s*/i,
+      ""
+    )
+    .trim();
+};
+
+const cleanOptionText = (text) => {
+  if (!text) return "";
+  return text
+    .replace(
+      /^\s*(?:(?:\(?[a-zA-Z]\)?[\.\)\-:]+|\([a-zA-Z0-9]\)|\d{1,2}\))\s*|(?:\(?\d{1,2}\)?(?:[\.\-:]+|[-–—])+|[-*•])\s+)\s*/,
+      ""
+    )
+    .trim();
+};
+
 export const handler = async (event) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -50,6 +70,7 @@ export const handler = async (event) => {
       3. Bold key terms in the question using markdown **bold**.
       4. Keep the options simple and direct.
       5. Do NOT change the correct answer logic, just the phrasing.
+      6. Do NOT add question numbers or option letters/bullets.
       
       Questions JSON:
       ${questionsJSON}`,
@@ -74,8 +95,8 @@ export const handler = async (event) => {
 
     const adaptedQuestions = adaptedData.map((q, index) => ({
       id: questions[index]?.id ? `${questions[index].id}-adapted` : `adapted-${index}-${Date.now()}`,
-      text: q.text,
-      options: q.options
+      text: cleanQuestionText(q.text),
+      options: (q.options || []).map(cleanOptionText)
     }));
 
     return {

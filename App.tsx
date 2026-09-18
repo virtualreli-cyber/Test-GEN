@@ -4,6 +4,7 @@ import { parseQuestionsFromText, adaptQuestionsForAccessibility, translateExamCo
 import { Question, ExamHeader, ExamSettings, GeneratedExam, SavedExam } from './types';
 import { ExamPaper } from './components/ExamPaper';
 import { ExamBank } from './components/ExamBank';
+import { cleanQuestionText, cleanOptionText } from './utils/textCleaner';
 
 // --- UTILITIES ---
 
@@ -138,7 +139,11 @@ export default function App() {
   // --- HELPERS ---
 
   const createVersion = (baseQs: Question[], id: number, currentSettings: ExamSettings): GeneratedExam => {
-      let questionsForVersion = [...baseQs];
+      let questionsForVersion = baseQs.map(q => ({
+        ...q,
+        text: cleanQuestionText(q.text),
+        options: (q.options || []).map(cleanOptionText)
+      }));
       if (currentSettings.randomizeQuestions) questionsForVersion = shuffleArray(questionsForVersion);
       questionsForVersion = questionsForVersion.map(q => {
         if (currentSettings.randomizeAnswers) return { ...q, options: shuffleArray(q.options) };
@@ -154,8 +159,14 @@ export default function App() {
   };
 
   const updateVersionsWithNewContent = async (newBaseQuestions: Question[]) => {
+    const cleanedBaseQuestions = newBaseQuestions.map(q => ({
+      ...q,
+      text: cleanQuestionText(q.text),
+      options: (q.options || []).map(cleanOptionText)
+    }));
+
     if (generatedVersions.length === 0) {
-        const initialVersion = createVersion(newBaseQuestions, 1, settings);
+        const initialVersion = createVersion(cleanedBaseQuestions, 1, settings);
         setGeneratedVersions([initialVersion]);
         setCurrentVersionIndex(0);
         return;
@@ -163,7 +174,7 @@ export default function App() {
 
     const updatedVersionsPromise = generatedVersions.map(async (version) => {
         if (version.type === 'standard' && version.language === 'es') {
-            let qs = [...newBaseQuestions];
+            let qs = [...cleanedBaseQuestions];
             if (settings.randomizeQuestions) qs = shuffleArray(qs);
             qs = qs.map(q => {
                 if (settings.randomizeAnswers) return { ...q, options: shuffleArray(q.options) };
@@ -174,8 +185,13 @@ export default function App() {
         
         if (version.type === 'adapted' && version.language === 'es') {
             try {
-                const adaptedQs = await adaptQuestionsForAccessibility(newBaseQuestions);
-                return { ...version, questions: adaptedQs };
+                const adaptedQs = await adaptQuestionsForAccessibility(cleanedBaseQuestions);
+                const cleanedAdapted = adaptedQs.map(q => ({
+                  ...q,
+                  text: cleanQuestionText(q.text),
+                  options: (q.options || []).map(cleanOptionText)
+                }));
+                return { ...version, questions: cleanedAdapted };
             } catch (err) {
                 console.error("No se pudo actualizar la versión adaptada", err);
                 return version; 
@@ -231,8 +247,13 @@ export default function App() {
     setError(null);
     try {
       const questions = await parseQuestionsFromText(inputText);
-      setParsedQuestions(questions);
-      await updateVersionsWithNewContent(questions);
+      const cleaned = questions.map(q => ({
+        ...q,
+        text: cleanQuestionText(q.text),
+        options: (q.options || []).map(cleanOptionText)
+      }));
+      setParsedQuestions(cleaned);
+      await updateVersionsWithNewContent(cleaned);
     } catch (err) {
       setError("Hubo un error al procesar el texto.");
     } finally {
@@ -251,10 +272,10 @@ export default function App() {
         if (lines.length < 2) return null;
         const text = lines[0];
         const options = lines.slice(1);
-        const cleanOptions = options.map(opt => opt.replace(/^([a-z0-9][\.\)]|-)\s*/i, ''));
+        const cleanOptions = options.map(opt => cleanOptionText(opt));
         return {
           id: `manual-${idx}-${Date.now()}`,
-          text: text.replace(/^\d+[\.\)]\s*/, ''),
+          text: cleanQuestionText(text),
           options: cleanOptions
         };
       }).filter((q): q is Question => q !== null);
@@ -299,11 +320,16 @@ export default function App() {
       setError(null);
       try {
           const adaptedQuestions = await adaptQuestionsForAccessibility(parsedQuestions);
+          const cleanedAdapted = adaptedQuestions.map(q => ({
+            ...q,
+            text: cleanQuestionText(q.text),
+            options: (q.options || []).map(cleanOptionText)
+          }));
           const existingAdaptedCount = generatedVersions.filter(v => v.type === 'adapted' && v.language === 'es').length;
           const nextAdaptedId = existingAdaptedCount + 1;
           const newVersion: GeneratedExam = {
               versionId: nextAdaptedId,
-              questions: adaptedQuestions,
+              questions: cleanedAdapted,
               type: 'adapted',
               language: 'es',
               label: `Adaptada ${nextAdaptedId > 1 ? nextAdaptedId : ''}`.trim()
@@ -358,7 +384,11 @@ export default function App() {
              
              newTranslatedVersions.push({
                  ...version,
-                 questions: translatedQs,
+                 questions: (translatedQs || []).map((q: any) => ({
+                   ...q,
+                   text: cleanQuestionText(q.text),
+                   options: (q.options || []).map(cleanOptionText)
+                 })),
                  localizedHeader: translatedHeader,
                  language: 'va',
                  label: `${version.label}`, 
@@ -381,7 +411,11 @@ export default function App() {
     setGeneratedVersions(prevVersions => {
       const newVersions = [...prevVersions];
       const currentVersion = newVersions[currentVersionIndex];
-      let newQuestions = currentVersion.questions.map(q => ({...q, options: [...q.options]}));
+      let newQuestions = currentVersion.questions.map(q => ({
+        ...q,
+        text: cleanQuestionText(q.text),
+        options: (q.options || []).map(cleanOptionText)
+      }));
 
       if (type === 'questions') newQuestions = shuffleArray(newQuestions);
       else if (type === 'answers') newQuestions = newQuestions.map(q => ({...q, options: shuffleArray(q.options)}));
@@ -500,8 +534,19 @@ export default function App() {
       
       try {
         const safeHeader = saved.header || DEFAULT_HEADER;
-        const safeQuestions = saved.parsedQuestions || [];
-        const safeVersions = saved.generatedVersions || [];
+        const safeQuestions = (saved.parsedQuestions || []).map(q => ({
+          ...q,
+          text: cleanQuestionText(q.text),
+          options: (q.options || []).map(cleanOptionText)
+        }));
+        const safeVersions = (saved.generatedVersions || []).map(v => ({
+          ...v,
+          questions: (v.questions || []).map(q => ({
+            ...q,
+            text: cleanQuestionText(q.text),
+            options: (q.options || []).map(cleanOptionText)
+          }))
+        }));
         const safeSettings = saved.settings || settings;
 
         setHeader(safeHeader);
@@ -730,6 +775,29 @@ export default function App() {
                           ))}
                       </div>
                   </div>
+
+                   {/* OPCIONES DE ALEATORIZACIÓN */}
+                   <div className="pt-2 space-y-2 border-t border-gray-100">
+                       <label className="text-xs text-gray-500 block">Opciones de Aleatorización</label>
+                       <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer select-none">
+                           <input 
+                             type="checkbox" 
+                             checked={settings.randomizeQuestions} 
+                             onChange={(e) => setSettings(s => ({...s, randomizeQuestions: e.target.checked}))}
+                             className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                           />
+                           <span>Aleatorizar preguntas al crear versiones</span>
+                       </label>
+                       <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer select-none">
+                           <input 
+                             type="checkbox" 
+                             checked={settings.randomizeAnswers} 
+                             onChange={(e) => setSettings(s => ({...s, randomizeAnswers: e.target.checked}))}
+                             className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                           />
+                           <span>Aleatorizar respuestas al crear versiones</span>
+                       </label>
+                   </div>
                   
                   {/* CONTROL DE VERSIONES ACTUALIZADO */}
                   <div className="pt-2">
@@ -898,11 +966,13 @@ export default function App() {
                    {currentPaginatedExam.map((pageQuestions, pageIdx) => {
                       const currentVer = generatedVersions[currentVersionIndex];
                       if (!currentVer) return null;
+                      const startIndex = currentPaginatedExam.slice(0, pageIdx).reduce((acc, p) => acc + p.length, 0) + 1;
                       
                       return (
                           <ExamPaper 
                              key={`${currentVer.versionId}-${pageIdx}`}
                              questions={pageQuestions}
+                             startIndex={startIndex}
                              header={currentVer.localizedHeader || header}
                              versionId={currentVer.versionId}
                              fontSize={settings.fontSize}
@@ -931,19 +1001,23 @@ export default function App() {
              if (!version) return null;
              const pages = paginateQuestions(version.questions, settings.fontSize, version.type);
              
-             return pages.map((pageQuestions, pageIdx) => (
-                <ExamPaper 
-                   key={`${version.type}-${version.versionId}-${version.language}-${pageIdx}`}
-                   questions={pageQuestions}
-                   header={version.localizedHeader || header}
-                   versionId={version.versionId}
-                   fontSize={settings.fontSize}
-                   examType={version.type}
-                   language={version.language}
-                   pageNumber={pageIdx + 1}
-                   totalPages={pages.length}
-                />
-             ));
+             return pages.map((pageQuestions, pageIdx) => {
+                const startIndex = pages.slice(0, pageIdx).reduce((acc, p) => acc + p.length, 0) + 1;
+                return (
+                   <ExamPaper 
+                      key={`${version.type}-${version.versionId}-${version.language}-${pageIdx}`}
+                      questions={pageQuestions}
+                      startIndex={startIndex}
+                      header={version.localizedHeader || header}
+                      versionId={version.versionId}
+                      fontSize={settings.fontSize}
+                      examType={version.type}
+                      language={version.language}
+                      pageNumber={pageIdx + 1}
+                      totalPages={pages.length}
+                   />
+                );
+             });
           })}
       </div>
     </>
