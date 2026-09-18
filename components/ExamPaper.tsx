@@ -57,7 +57,7 @@ export const ExamPaper: React.FC<ExamPaperProps> = ({
       <div className="w-full flex justify-between items-center border-b-2 border-gray-800 pb-2 mb-4 h-[15mm]">
          <span className="uppercase font-bold tracking-wider text-xs">{header.department}</span>
          <div className="flex gap-4 text-xs">
-            <span className="font-semibold text-gray-600 truncate max-w-[300px]">{header.title}</span>
+            <span className="font-semibold text-gray-600 truncate max-w-[300px] uppercase">{header.title}</span>
             <div className="flex gap-1">
                 {language === 'va' && <span className="bg-yellow-100 text-yellow-800 px-1 rounded text-[10px] font-bold border border-yellow-200">VAL</span>}
                 {examType === 'adapted' && <span className="bg-indigo-100 text-indigo-800 px-1 rounded text-[10px] font-bold border border-indigo-200" title="Versión Adaptada">A.C.</span>}

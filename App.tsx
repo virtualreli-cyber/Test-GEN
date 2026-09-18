@@ -65,9 +65,9 @@ const paginateQuestions = (questions: Question[], fontSize: string, type: 'stand
 // --- CONSTANTS ---
 
 const DEFAULT_HEADER: ExamHeader = {
-  title: "EXAMEN PARCIAL",
-  subtitle: "Evaluación de conocimientos generales",
-  department: "Departamento de Ciencias",
+  title: "EXAMEN",
+  subtitle: "Tema ...",
+  department: "Departamento de Religión",
   nameLabel: "Nombre",
   courseLabel: "Curso",
 };
